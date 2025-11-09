@@ -63,7 +63,9 @@ st.divider()
 
 # ----------------------------- Tabs ----------------------------------------
 
-tab_issue, tab_share, tab_verify, tab_revoke = st.tabs(["📄 Issue", "🔗 Share", "🔍 Verify", "⛔ Revoke"])
+tab_issue, tab_share, tab_verify, tab_revoke, tab_history = st.tabs(
+    ["📄 Issue", "🔗 Share", "🔍 Verify", "⛔ Revoke", "🕘 History"]
+)
 
 # ----------------------------- Issue ---------------------------------------
 
@@ -212,7 +214,58 @@ with tab_revoke:
                     st.code(json.dumps(data, indent=2) if isinstance(data, dict) else str(data))
 
 # ----------------------------- Footer --------------------------------------
+# ----------------------------- History --------------------------------------
 
+with tab_history:
+    st.subheader("History (public audit)")
+
+    with st.form("history_form"):
+        cred_hist = st.text_input("Credential ID", value="CRED3001")
+        go_hist = st.form_submit_button("📜 Fetch history")
+        if go_hist:
+            if not cred_hist.strip():
+                st.error("Credential ID is required.")
+            else:
+                with st.spinner("Loading audit trail…"):
+                    ok, data, sec = call_api("GET", f"/history/{cred_hist.strip()}")
+                if ok and isinstance(data, list):
+                    st.success(f"✅ {len(data)} event(s) • {sec:.2f}s")
+                    # Sort by timestamp ascending
+                    try:
+                        data_sorted = sorted(
+                            data,
+                            key=lambda x: x.get("timestamp", "")
+                        )
+                    except Exception:
+                        data_sorted = data
+                    # Pretty table
+                    import pandas as pd
+                    df = pd.DataFrame(data_sorted)
+                    if not df.empty:
+                        order = ["timestamp", "action", "mspID", "txID", "note"]
+                        cols = [c for c in order if c in df.columns] + [c for c in df.columns if c not in order]
+                        st.dataframe(df[cols], use_container_width=True, hide_index=True)
+                        # make available outside the form for download
+                        st.session_state._history_json = data_sorted
+                        st.session_state._history_id = cred_hist.strip()
+                    else:
+                        st.info("No history yet.")
+                else:
+                    st.error("Failed to fetch history.")
+                    st.code(json.dumps(data, indent=2) if isinstance(data, dict) else str(data))
+                    st.session_state._history_json = None
+                    st.session_state._history_id = ""
+
+    # OUTSIDE the form: download button
+    if st.session_state.get("_history_json"):
+        st.download_button(
+            "⬇️ Download history JSON",
+            data=json.dumps(st.session_state["_history_json"], indent=2),
+            file_name=f"{st.session_state.get('_history_id','history')}.audit.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+        
 st.divider()
 st.caption(
     "Tips: Use fresh Credential IDs for each cycle. If a step fails, check the sidebar health check, "

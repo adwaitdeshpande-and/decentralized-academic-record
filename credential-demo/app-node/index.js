@@ -256,6 +256,35 @@ app.get("/verify-hash/:credID", async (req, res) => {
   } finally { try { gateway?.close(); } catch {} }
 });
 
+// ----- HISTORY (public state; tolerant to empty/null) -----
+app.get("/history/:credID", async (req, res) => {
+  let gateway;
+  try {
+    const r = await getContract({ msp: "Org1MSP", userDir: "Admin@org1.example.com" });
+    gateway = r.gateway;
+    const c = r.contract;
+
+    const p = c.newProposal("ListHistory", { arguments: [req.params.credID] });
+    const buf = await p.evaluate({ endorsingOrganizations: ["Org1MSP"] });
+
+    // Robust decode
+    const txt = Buffer.from(buf || []).toString("utf8").trim();
+    if (!txt || txt === "null") return res.json([]); // empty audit list
+
+    let events;
+    try { events = JSON.parse(txt); } catch { return res.json([]); }
+    if (!Array.isArray(events)) events = [];
+    res.json(events);
+  } catch (e) {
+    console.error("History error:", e);
+    res.status(500).json({ error: e?.details || e?.message || String(e) });
+  } finally {
+    try { gateway?.close(); } catch {}
+  }
+});
+
+
+
 // ----- Start server -----
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
