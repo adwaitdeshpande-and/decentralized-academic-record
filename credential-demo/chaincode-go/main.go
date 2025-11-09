@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -17,10 +19,19 @@ type Credential struct {
 	Degree        string `json:"degree"`
 	GPA           string `json:"gpa"`
 	IssueDate     string `json:"issueDate"`
-	Hash          string `json:"hash"`
+	Hash          string `json:"hash"` // auto-computed, SHA-256 hex
 	Status        string `json:"status"` // issued / revoked
 	OwnerMSP      string `json:"ownerMSP"`
 	SharedWithMSP string `json:"sharedWithMSP"` // always present, may be ""
+}
+
+type IntegrityReport struct {
+	CredID        string `json:"credID"`
+	StoredHash    string `json:"storedHash"`
+	ComputedHash  string `json:"computedHash"`
+	IsHashValid   bool   `json:"isHashValid"`
+	SharedWithMSP string `json:"sharedWithMSP"`
+	Status        string `json:"status"`
 }
 
 // ---------- Smart Contract ----------
@@ -29,10 +40,23 @@ type SmartContract struct {
 	contractapi.Contract
 }
 
-// ---------- Issue ----------
+// canonical string over which the hash is computed (order is fixed)
+func canonicalString(c *Credential) string {
+	// Do NOT include Hash itself or mutable fields like OwnerMSP/SharedWithMSP/Status in the hash
+	// Order: credID|studentID|studentName|university|degree|gpa|issueDate
+	return c.CredID + "|" + c.StudentID + "|" + c.StudentName + "|" +
+		c.University + "|" + c.Degree + "|" + c.GPA + "|" + c.IssueDate
+}
+
+func computeSHA256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// ---------- Issue (Org1 writes to Org1 PDC) ----------
 
 func (s *SmartContract) IssueCredential(ctx contractapi.TransactionContextInterface,
-	credID, studentID, studentName, university, degree, gpa, issueDate, hash string) error {
+	credID, studentID, studentName, university, degree, gpa, issueDate, _ string) error {
 
 	exists, err := s.CredentialExists(ctx, credID)
 	if err != nil {
@@ -55,11 +79,12 @@ func (s *SmartContract) IssueCredential(ctx contractapi.TransactionContextInterf
 		Degree:        degree,
 		GPA:           gpa,
 		IssueDate:     issueDate,
-		Hash:          hash,
 		Status:        "issued",
 		OwnerMSP:      mspid,
-		SharedWithMSP: "", // always present
+		SharedWithMSP: "",
 	}
+	// Auto-compute hash
+	cred.Hash = computeSHA256Hex(canonicalString(&cred))
 
 	data, _ := json.Marshal(cred)
 	return ctx.GetStub().PutPrivateData("Org1PrivateCollection", credID, data)
@@ -80,13 +105,14 @@ func (s *SmartContract) ReadCredential(ctx contractapi.TransactionContextInterfa
 	if err := json.Unmarshal(data, &cred); err != nil {
 		return nil, err
 	}
+	// keep field always present
 	if cred.SharedWithMSP == "" {
 		cred.SharedWithMSP = ""
 	}
 	return &cred, nil
 }
 
-// ---------- Write for Org2 (called by Org2) ----------
+// ---------- Store for Org2 (Org2 identity; verifies hash) ----------
 
 func (s *SmartContract) StoreCredentialForOrg2(ctx contractapi.TransactionContextInterface, credJSON string) error {
 	mspid, _ := ctx.GetClientIdentity().GetMSPID()
@@ -100,6 +126,12 @@ func (s *SmartContract) StoreCredentialForOrg2(ctx contractapi.TransactionContex
 	}
 	if cred.CredID == "" {
 		return fmt.Errorf("credID required in credential json")
+	}
+
+	// Recompute hash and enforce integrity
+	computed := computeSHA256Hex(canonicalString(&cred))
+	if cred.Hash == "" || cred.Hash != computed {
+		return fmt.Errorf("hash mismatch for credID %s: provided='%s' computed='%s'", cred.CredID, cred.Hash, computed)
 	}
 
 	cred.SharedWithMSP = "Org2MSP"
@@ -133,6 +165,38 @@ func (s *SmartContract) VerifyCredential(ctx contractapi.TransactionContextInter
 	return &cred, nil
 }
 
+// ---------- Verify hash integrity (Org2) ----------
+
+func (s *SmartContract) VerifyCredentialIntegrity(ctx contractapi.TransactionContextInterface, credID string) (*IntegrityReport, error) {
+	mspid, _ := ctx.GetClientIdentity().GetMSPID()
+	if mspid != "Org2MSP" {
+		return nil, fmt.Errorf("only Org2 can verify integrity")
+	}
+
+	data, err := ctx.GetStub().GetPrivateData("Org2PrivateCollection", credID)
+	if err != nil {
+		return nil, err
+	}
+	if data == nil {
+		return nil, fmt.Errorf("credential %s not found in Org2 collection", credID)
+	}
+
+	var cred Credential
+	if err := json.Unmarshal(data, &cred); err != nil {
+		return nil, err
+	}
+	computed := computeSHA256Hex(canonicalString(&cred))
+	report := &IntegrityReport{
+		CredID:        cred.CredID,
+		StoredHash:    cred.Hash,
+		ComputedHash:  computed,
+		IsHashValid:   cred.Hash == computed,
+		SharedWithMSP: cred.SharedWithMSP,
+		Status:        cred.Status,
+	}
+	return report, nil
+}
+
 // ---------- Revoke (Org1 only) ----------
 
 func (s *SmartContract) RevokeCredential(ctx contractapi.TransactionContextInterface, credID string) error {
@@ -157,7 +221,7 @@ func (s *SmartContract) RevokeCredential(ctx contractapi.TransactionContextInter
 	if cred.SharedWithMSP == "" {
 		cred.SharedWithMSP = ""
 	}
-
+	// Hash stays the same since canonical fields (except Status) are unchanged.
 	newData, _ := json.Marshal(cred)
 	return ctx.GetStub().PutPrivateData("Org1PrivateCollection", credID, newData)
 }

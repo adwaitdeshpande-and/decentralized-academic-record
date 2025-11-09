@@ -151,6 +151,10 @@ with tab_verify:
                     ok, data, sec = call_api("GET", f"/verify/{credID3.strip()}")
                 if ok:
                     st.success(f"✅ Verified  •  {sec:.2f}s")
+                    ok2, report, _ = call_api("GET", f"/verify-hash/{credID3.strip()}")
+                    if ok2 and isinstance(report, dict):
+                        badge = "✅" if report.get("isHashValid") else "❌"
+                    st.info(f"{badge} Hash check — stored: {report.get('storedHash')[:10]}…  computed: {report.get('computedHash')[:10]}…")
                     st.json(data)
                     # Save for download OUTSIDE the form
                     st.session_state.last_verification = data

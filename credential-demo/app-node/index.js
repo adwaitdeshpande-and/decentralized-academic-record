@@ -242,6 +242,20 @@ app.post("/revoke", async (req, res) => {
   }
 });
 
+// GET /verify-hash/:credID  (Org2)
+app.get("/verify-hash/:credID", async (req, res) => {
+  let gateway;
+  try {
+    const r = await getContract({ msp: "Org2MSP", userDir: "Admin@org2.example.com" });
+    gateway = r.gateway; const c = r.contract;
+    const p = c.newProposal("VerifyCredentialIntegrity", { arguments: [req.params.credID] });
+    const buf = await p.evaluate({ endorsingOrganizations: ["Org2MSP"] });
+    res.json(JSON.parse(Buffer.from(buf).toString("utf8")));
+  } catch (e) {
+    res.status(500).json({ error: e?.details || e?.message || String(e) });
+  } finally { try { gateway?.close(); } catch {} }
+});
+
 // ----- Start server -----
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
