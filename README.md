@@ -31,7 +31,10 @@ Install Docker, Docker Compose, Node.js (≥18), Go (≥1.20), Python (≥3.10),
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/hyperledger/fabric/main/scripts/install-fabric.sh -o install-fabric.sh
-chmod +x install-fabric.sh && ./install-fabric.sh binary docker samples
+chmod +x install-fabric.sh
+
+# This pulls: 1) Fabric client binaries, 2) Docker images, 3) the samples repo with test-network
+./install-fabric.sh binary docker samples
 2. Start Fabric Test Network
 bash
 Copy code
