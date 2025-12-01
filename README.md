@@ -67,8 +67,6 @@ pip install -r requirements.txt
 streamlit run app.py
 Visit: http://localhost:8501
 
-📘 Functional Flow
-Action	Performed by	Description
 Issue	Org1	Create credential with auto SHA-256 hash
 Share	Org1 → Org2	Copy private data securely
 Verify	Org2	View + validate hash
